@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8">
+<title> GriHoot </title>
+<link rel="icon" type="image/gif" href="https://grisha.vartanyan.com/favicon.ico" />
+<style type="text/css">body{text-align:center;margin:40px auto;max-width:650px;line-height:1.6;font-size:18px;color:#eee;background-color:#121212;padding:0 10px;font-family: "Comic Sans MS", "Comic Sans", cursive;}</style>
+
+<script type="text/javascript">
+
+const socket = new WebSocket('ws://localhost:7878/ws');
+socket.onopen = function() {console.log("socket opened :)");};
+socket.onclose = function(e) {console.log("websocket closed! code:" +e.code+ " reason:" + e.reason);};
+socket.onerror = function(e) {console.log('websocket error!');};
+socket.onmessage = function(e) {
+  console.log("recieved:\n" + e.data);
+  const arr = e.data.split("\n");
+  const qID = arr[0];
+  const opt_count = arr.length - 2;
+  
+  document.getElementById("title").innerHTML = arr[1];
+
+  const d = document.getElementById("buttons");
+  for (let aID=0; aID<opt_count; aID++) {
+    var butt = document.createElement("button");
+    butt.innerHTML = arr[aID+2];
+    butt.style.width = "200px";
+    butt.style.height = "200px";
+    butt.style.margin = "2px";
+    butt.onclick = function() {submitAns(qID, aID)};
+
+    const dv = document.createElement("div");
+    dv.appendChild(butt);
+    d.appendChild(dv);
+  }
+};
+
+function clear() {
+  document.getElementById("buttons").innerHTML = "";  // delete buttons
+  document.getElementById("title").innerHTML = "Waiting Patiently...";
+}
+
+function submitAns(qID, aID) {
+  clear();
+  socket.send(String(qID) + String(aID));
+  console.log("guessed " + aID + " for question " + qID);
+}
+
+</script>
+
+
+</head>
+<body>
+<h1>Grihoot :)</h1>
+<h2 id="title">Waiting Patiently...</h2>
+<div id="buttons" style="display: grid;grid-template-columns: 200px 200px 200px;grid-column-gap: 10px;grid-row-gap: 10px;"></div>
+</body>
+</html>

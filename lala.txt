@@ -1,0 +1,31 @@
+3What is the circumference of the Earth?
+40 Kilometres
+400 Kilometres
+4 Megametres
+40 Megametres
+400 Megametres
+4 Gigametres
+
+3How many digits does Renaud have?
+One
+Two
+Three
+quatro
+5
+6
+
+0What is the ideal gas law?
+PV = nRT
+PRT = nV
+PV/T = k
+F = ma
+v = ir
+x = b2+4ac/2a
+
+0How much wood can a wood chuck chuck if a wood chuck could chuck wood?
+who cares, I'm just testing the limits of my websocket implementation and how the buttons look when there's lots of text on them
+not an unreasonable amount
+a non-trivial number of pairs
+hopefully it holds up sending so much data over. I'm pretty sure it could quite literally send over an essay, since it can take like 2^64 charachters. Maybe I should try some emojis as well, I expect they should work too. At least I see no reason why they wouldn't
+🍆🍆🍆
+would you look at that, they work just fine. The buttons don't like having this much text on them though, it messes up the margins. Luckily I'm not a webdev so solving this isn't my job
