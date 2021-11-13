@@ -1,26 +1,28 @@
 extern crate sha1;
 
+use std::ops::Deref;
 use std::{env, panic};
 use std::path::Path;
 use std::fs;
-use rand::random;
 use std::time::SystemTime;
-use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::thread;
 
 use std::io::prelude::*;
 use std::net::TcpListener;
 use std::net::TcpStream;
+use std::sync::Arc;
+
+const IP_PORT: &str = "localhost:7878";
 
 
 #[derive(Debug)]
-struct Question<'a> {
+struct Question {
     id: u8,
     ans: u8,        // index of answer
-    text: &'a str,  // question and answers separated by newlines
+    text: String,  // question and answers separated by newlines
 }
-impl Question <'_> {
+impl Question {
     // https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers
     fn ws_packet(&self) -> Vec<u8> {  // TODO: think about caching
 
@@ -55,7 +57,7 @@ impl Question <'_> {
 #[derive(Debug)]
 struct PageData<'a> {
     id: u32,
-    question: &'a Question<'a>,
+    question: &'a Question,
     // TODO: time
 }
 
@@ -94,105 +96,114 @@ fn main() {
         println!("Path doesn't point to file!");
         std::process::exit(1);
     }
-    let file_contents = fs::read_to_string(path)
-        .expect("File read failed");
+    let file_contents = fs::read_to_string(path).expect("File read failed");
 
     // extract questions from file
-    let mut qs: Vec<Question> = Vec::with_capacity(10);
-    for (i, t) in file_contents.split("\n\n").enumerate() {
+    let mut questions: Vec<Question> = Vec::with_capacity(10);
+    for (i, t) in file_contents.split("\n\n").map(|s| s.to_string()).enumerate() {
         let ans = t.bytes().nth(0).expect("empty question; newlines at end of file?") - b'0';
-        qs.push(Question{id: i as u8, ans, text: &t[1..]});
+        let mut tt = t.clone();
+        tt.remove(0);  // TODO: remove first char in a better way
+        questions.push(Question{id: i as u8, ans, text: tt});
     }
-
-    let blank_page = fs::read_to_string("page.html").unwrap();
-    let mut users: HashMap<u32, User> = HashMap::new();
-
+    let questions_arc = Arc::new(questions);
+    let page = fs::read_to_string("page.html").unwrap();
+    //let mut users: HashMap<u32, User> = HashMap::new();
 
     // start server
-    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+    let listener = TcpListener::bind(IP_PORT).unwrap();
     for stream in listener.incoming() {
-        let stream = stream.unwrap();
-        //thread::spawn(|| {
-            handle_connection(stream, &blank_page, &qs, &mut users);
-        //});
+        let mut stream = stream.unwrap();
+        let questions_arc = Arc::clone(&questions_arc);
+
+        let mut buffer = [0; 1024];
+        stream.read(&mut buffer).unwrap();
+        let beg_text = String::from_utf8_lossy(&buffer[..]).deref().to_string();
+        println!("-------RECIEVE------\n{}", beg_text);
+
+        if     !beg_text.starts_with("GET /")      {println!("NON-GET REQ")}
+        else if beg_text.starts_with("GET / HTTP") {send_init_page(&mut stream, &page);}
+        else if beg_text.starts_with("GET /ws HTTP") {
+            // start WS -> new thread, yada yada
+            thread::spawn( || {
+                let addr = stream.peer_addr().unwrap();
+                println!("---===   NEW THREAD STARTED   ===---\n[serving {:?}]\n", addr);
+                handle_connection(
+                    stream,
+                    questions_arc,
+                    beg_text,
+                    //&mut users
+                );
+                println!("---===   THREAD DEAD   ===---\n[serving {:?}]\n", addr);
+            });
+        } else {println!("STRANGE GET REQ")}
+
     }
 }
 
 fn handle_connection(
     mut stream: TcpStream,
-    page: &str,
-    qs: &Vec<Question>,
-    users: &mut HashMap<u32, User>,
+    questions_arc: Arc<Vec<Question>>,
+    request_text: String,
+    //users: &mut HashMap<u32, User>,
 ) {
-    let mut buffer = [0; 1024];
-    stream.read(&mut buffer).unwrap();
+    
+    // connection to websocket, start thing
+    let key_in = &request_text.split("Sec-WebSocket-Key: ")
+        .nth(1).expect("no ws key")[..24];
+    let response = format!(
+        "HTTP/1.1 101 Switching Protocols\r\n\
+        Upgrade: websocket\r\n\
+        Connection: Upgrade\r\n\
+        Sec-WebSocket-Accept: {}\r\n\r\n",
+        ws_response_hash(key_in),
+    );
+    send_bytes_to_stream(&mut stream, response.as_bytes());
+    println!("-------SEND------\n{}", response);
 
-    let request_text = String::from_utf8_lossy(&buffer[..]);
-    println!("-------RECIEVE------\n{}", request_text);
+    for q in questions_arc.iter() {
+        let send_data = &q.ws_packet();
+        send_bytes_to_stream(&mut stream, send_data);
+        println!("-------SEND------\n{:?}\n", send_data);
+        
+        thread::sleep_ms(100);
+        let mut buf = [0; 8];
+        stream.read(&mut buf).unwrap();
+        println!("Revieced WS: {:?}", buf);
+        
+        if buf[0] != 129 {continue;}  // fin, text
+        if buf[1] != 130 {continue;}  // mask, len=2
 
-    let user: User;
-    let pid: u32;
-    match request_text.split(' ').nth(0).unwrap() {
-        "GET" => {
-            match request_text.split(' ').nth(1).unwrap() {
-                "/ws" => {  // connection to websocket
-                    let key_in = &request_text.split("Sec-WebSocket-Key: ")
-                        .nth(1).expect("no ws key")[..24];
-                    let hash_out = ws_response_hash(key_in);
-                    let response = format!(
-                        "HTTP/1.1 101 Switching Protocols\r\n\
-                        Upgrade: websocket\r\n\
-                        Connection: Upgrade\r\n\
-                        Sec-WebSocket-Accept: {}\r\n\r\n",
-                        hash_out,
-                    );
-                    send_bytes_to_stream(&mut stream, response.as_bytes());
-                    println!("-------SEND------\n{}", response);
+        let qID = (buf[2] ^ buf[6]) - b'0';
+        let aID = (buf[3] ^ buf[7]) - b'0';
 
-                    
-                    for q in qs {
-                        let send_data = &q.ws_packet();
-                        send_bytes_to_stream(&mut stream, send_data);
-                        println!("-------SEND------\n{:?}\n", send_data);
-                    
-                        thread::sleep_ms(300);
-                        let mut buf = [0; 8];
-                        stream.read(&mut buf).unwrap();
-                        println!("Revieced WS: {:?}", buf);
+        if qID != q.id {println!("WRONG QUESTION ANSWERED");continue;}  // TODO
 
-                        if buf[0] != 129 {continue;}  // fin, text
-                        if buf[1] != 130 {continue;}  // mask, len=2
-
-                        let qID = (buf[2] ^ buf[6]) - b'0';
-                        let aID = (buf[3] ^ buf[7]) - b'0';
-
-                        if qID != q.id {println!("WRONG QUESTION ANSWERED");continue;}  // TODO
-
-                        println!("Guessed {} for question {}.", aID, qID);
-                        println!("Correct answer was {}. You guess was {}.\n", q.ans, q.ans==aID);
-                    }
-                }
-                _     => {  // presume initial GET request
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
-                        page.len(),
-                        page,
-                    );
-                    send_bytes_to_stream(&mut stream, response.as_bytes());
-                    println!("-------SEND------\n{}", response);
-                }
-            }
-
-            pid = random::<u32>();
-            user = User {
-                pid,
-                last_seen: SystemTime::now(),
-                score: 0,
-            };
-            users.insert(pid, user);
-        }
-        _    => {println!("hmm")}
+        println!("Guessed {} for question {}.", aID, qID);
+        println!("Correct answer was {}. You guess was {}.\n", q.ans, q.ans==aID);
     }
+    println!("all questions finished!");
+    loop {};
+
+    /*pid = random::<u32>();
+    user = User {
+        pid,
+        last_seen: SystemTime::now(),
+        score: 0,
+    };
+    users.insert(pid, user);*/
+}
+
+
+fn send_init_page(stream: &mut TcpStream, page: &String) {
+    // recieved initial GET for main page
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+        page.len(),
+        page,
+    );
+    send_bytes_to_stream(stream, response.as_bytes());
+    println!("-------SEND------\n{}[HTML PAGE]\n", &response[..40]);
 }
 
 
