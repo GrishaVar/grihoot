@@ -21,8 +21,8 @@ const T_GAME: &str = "GAME";
 
 #[derive(Debug)]
 struct Question {
-    id: u8,
-    ans: u8, // index of answer (utf8 encoded to avoid conversions)
+    id: u8,  // index of question (utf8 encoded)
+    ans: u8, // index of answer (utf8 encoded)
     text: String, // question and answers separated by newlines
     ws_pack: Vec<u8>, // bytes for sending question via ws 
 }
@@ -44,11 +44,11 @@ fn main() {
     // extract questions from file
     let mut questions: Vec<Question> = Vec::with_capacity(10);
     for (id, mut text) in file_contents.split("\n\n").map(|s| s.to_string()).enumerate() {
-        let id: u8 = id.try_into().expect("More than 128 questions!");
+        let id: u8 = id as u8 + b'0';
         let ans: u8 = text.bytes().nth(0).expect("empty question; newlines at end of file?");
         text.remove(0);  // TODO: O(n). Store at the end so I can pop?
         let mut ws_pack = String::with_capacity(2 + text.len());
-        ws_pack.push((id + b'0') as char);
+        ws_pack.push(id as char);
         ws_pack.push('\n');
         ws_pack.push_str(&text);
         let ws_pack = ws_packet(ws_pack.as_bytes());
@@ -132,40 +132,35 @@ fn game(
         #[allow(deprecated)]
         thread::sleep_ms(ANSWER_TIME_MS);
 
-        for stream in &mut *streams.lock().unwrap() {
-            let ans = {
-                let mut a_id = q.ans + 1;
-                let mut q_id = q.id + 1;
-                while q_id != q.id {  // ignore answers to old questions
-                    let mut buff = [0; 8];
-                    let q_id_a_id = match stream.read(&mut buff) {
-                        Ok(_) => match ws_parse_incoming(&buff) {
-                            Some(res) => res,
-                            None => (q.id, q.ans+1),  // invalid data
-                        },
-                        Err(_) => (q.id, q.ans+1),  // no data
-                    };
-                    q_id = q_id_a_id.0;  // TODO: avoid doing this?
-                    a_id = q_id_a_id.1;
-                }
-                a_id
-            };
+        'players: for stream in &mut *streams.lock().unwrap() {
             let score = scores
                 .entry(stream.peer_addr().unwrap())
                 .or_insert(0);
-            if ans == q.ans {
-                println!("Correct {:?}", stream.peer_addr().unwrap());
-                // correct answer to correct question. +1 point! :)
-                *score += 1;
+
+            loop {
+                let mut buff = [0; 8];
+                match stream.read(&mut buff) {
+                    Err(_) => continue 'players,  // no data (didn't answer)
+                    Ok(_) => match ws_parse_incoming(&buff) {
+                        Some((q_id, a_id)) if (q_id==q.id && a_id==q.ans) => {
+                            *score += 1;
+                            break;
+                        },
+                        Some((q_id, _)) if q_id==q.id => continue 'players,  // wrong answer
+                        Some(_) => continue,  // guess for wrong question, try next buffer
+                        None => continue 'players,  // invalid data (TODO: kick?)
+                    },
+                };
             }
         }
     }
 
     println!("[{}]: QUESTIONS FINISHED; {} players", T_GAME, scores.len());
     println!("[{}]: FINAL RESULTS:", T_GAME);
-    scores.iter().enumerate().for_each(
+    println!("{:?}", scores);
+    /* scores.iter().enumerate().for_each(
         |(i, (a, s))| println!("{}) {:?} scored {}", i, a, s)
-    );
+    ); */
     for stream in &mut *streams.lock().unwrap() {
         send_bytes_to_stream(stream, b"\x81\x24Game Finished! Closing Connection...");
     }
