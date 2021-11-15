@@ -10,36 +10,46 @@
 
 const socket = new WebSocket('ws://localhost:7878/ws');
 socket.onopen = function() {console.log("socket opened :)");};
-socket.onclose = function(e) {console.log("websocket closed! code:" +e.code+ " reason:" + e.reason);};
 socket.onerror = function(e) {console.log('websocket error!');};
+socket.onclose = function(e) {
+  console.log("websocket closed! code:" +e.code+ " reason:" + e.reason);
+  clear("Connection Closed!");
+};
 socket.onmessage = function(e) {
   console.log("recieved:\n" + e.data);
   const arr = e.data.split("\n");
-  const qID = arr[0];
-  const opt_count = arr.length - 2;
-  
-  document.getElementById("title").innerHTML = arr[1];
+  const first = arr[0];
+  if (isNaN(parseInt(first))) {
+    // first line is a non-number => this is a message
+    clear(first);
+  } else {
+    // first line is a number => this is a question
+    q_id = first;
+    const opt_count = arr.length - 2;
+    
+    document.getElementById("title").innerHTML = arr[1];
 
-  const d = document.getElementById("buttons");
-  for (let aID=0; aID<opt_count; aID++) {
-    var butt = document.createElement("button");
-    butt.innerHTML = arr[aID+2];
-    butt.style.width = "200px";
-    butt.style.height = "200px";
-    butt.style.margin = "2px";
-    butt.onclick = function() {submitAns(qID, aID)};
+    const d = document.getElementById("buttons");
+    for (let a_id=0; a_id<opt_count; a_id++) {
+      var butt = document.createElement("button");
+      butt.innerHTML = arr[a_id+2];
+      butt.style.width = "200px";
+      butt.style.height = "200px";
+      butt.style.margin = "2px";
+      butt.onclick = function() {submitAns(q_id, a_id)};
 
-    d.appendChild(butt);
+      d.appendChild(butt);
+    }
   }
 };
 
-function clear() {
+function clear(msg) {
   document.getElementById("buttons").innerHTML = "";  // delete buttons
-  document.getElementById("title").innerHTML = "Waiting Patiently...";
+  document.getElementById("title").innerHTML = msg;
 }
 
 function submitAns(qID, aID) {
-  clear();
+  clear("Waiting Patiently...");
   socket.send(String(qID) + String(aID));
   console.log("guessed " + aID + " for question " + qID);
 }
