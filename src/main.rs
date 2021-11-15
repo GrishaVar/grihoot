@@ -63,73 +63,15 @@ fn main() {
         html_page.len(),
         html_page,
     );
-    
+
     // prepare stream handles handler
-    let streams: Arc<Mutex<Vec<TcpStream>>> = Arc::new(Mutex::new(Vec::with_capacity(20)));
+    let streams = Arc::new(Mutex::new(Vec::with_capacity(20)));
     // TODO: remove type here
 
     // set up game data and thread
     let game_thread = {
         let streams = Arc::clone(&streams);
-        // TODO: I don't think arc is needed anymore, move quesitons into game thread.
-        thread::spawn(move || {
-            let mut scores: HashMap<SocketAddr, u8> = HashMap::with_capacity(20);
-
-            println!("[{}]: PRESS RETURN TO START QUESTIONS", T_GAME);
-            let mut buffer = String::new();
-            std::io::stdin().read_line(&mut buffer).unwrap();  // wait for user input
-            println!("[{}]: QUESTIONS STARTING", T_GAME);
-
-            for (i, q) in questions.iter().enumerate() {
-                println!("[{}]: QUESTION {}", T_GAME, i);
-
-                // send Q to everyone
-                for stream in &mut *streams.lock().unwrap() {
-                    stream.write(&q.ws_pack).expect("Question send failed");
-                }
-
-                thread::sleep_ms(ANSWER_TIME_MS);
-
-                for stream in &mut *streams.lock().unwrap() {
-                    let ans = {
-                        let mut a_id = q.ans + 1;
-                        let mut q_id = q.id + 1;
-                        while q_id != q.id {  // ignore answers to old questions
-                            let mut buff = [0; 8];
-                            let q_id_a_id = match stream.read(&mut buff) {
-                                Ok(_) => match ws_parse_incoming(&buff) {
-                                    Some(res) => res,
-                                    None => (q.id, q.ans+1),  // invalid data
-                                },
-                                Err(_) => (q.id, q.ans+1),  // no data
-                            };
-                            q_id = q_id_a_id.0;  // TODO: avoid doing this?
-                            a_id = q_id_a_id.1;
-                        }
-                        a_id
-                    };
-                    if ans == q.ans {
-                        println!("Correct {:?}", stream.peer_addr().unwrap());
-                        // correct answer to correct question. +1 point! :)
-                        let score = scores
-                            .entry(stream.peer_addr().unwrap())
-                            .or_insert(0);
-                        *score += 1;
-                    }
-                }
-            }
-
-            println!("[{}]: QUESTIONS FINISHED; {} players", T_GAME, scores.len());
-            println!("[{}]: FINAL RESULTS:", T_GAME);
-            scores.iter().enumerate().for_each(|d| println!("{:?}", d));
-            for stream in &mut *streams.lock().unwrap() {
-                send_bytes_to_stream(stream, b"\x81\x24Game Finished! Closing Connection...");
-            }
-            thread::sleep_ms(2000);
-            for stream in &mut *streams.lock().unwrap() {
-                stream.shutdown(std::net::Shutdown::Both).expect("Shutdown failed");
-            }
-        })
+        thread::spawn( || {game(streams, questions);})
     };
 
     // start server
@@ -168,6 +110,73 @@ fn main() {
     println!("[{}]: ALL THREADS JOINED, EXIT", T_MAIN);
 }
 
+fn game(
+    streams: Arc<Mutex<Vec<TcpStream>>>,
+    questions: Vec<Question>,
+) {
+    let mut scores: HashMap<SocketAddr, u8> = HashMap::with_capacity(20);
+
+    println!("[{}]: PRESS RETURN TO START QUESTIONS", T_GAME);
+    let mut buffer = String::new();
+    std::io::stdin().read_line(&mut buffer).unwrap();  // wait for user input
+    println!("[{}]: QUESTIONS STARTING", T_GAME);
+
+    for (i, q) in questions.iter().enumerate() {
+        println!("[{}]: QUESTION {}", T_GAME, i);
+
+        // send Q to everyone
+        for stream in &mut *streams.lock().unwrap() {
+            send_bytes_to_stream(stream, &q.ws_pack);
+        }
+
+        #[allow(deprecated)]
+        thread::sleep_ms(ANSWER_TIME_MS);
+
+        for stream in &mut *streams.lock().unwrap() {
+            let ans = {
+                let mut a_id = q.ans + 1;
+                let mut q_id = q.id + 1;
+                while q_id != q.id {  // ignore answers to old questions
+                    let mut buff = [0; 8];
+                    let q_id_a_id = match stream.read(&mut buff) {
+                        Ok(_) => match ws_parse_incoming(&buff) {
+                            Some(res) => res,
+                            None => (q.id, q.ans+1),  // invalid data
+                        },
+                        Err(_) => (q.id, q.ans+1),  // no data
+                    };
+                    q_id = q_id_a_id.0;  // TODO: avoid doing this?
+                    a_id = q_id_a_id.1;
+                }
+                a_id
+            };
+            let score = scores
+                .entry(stream.peer_addr().unwrap())
+                .or_insert(0);
+            if ans == q.ans {
+                println!("Correct {:?}", stream.peer_addr().unwrap());
+                // correct answer to correct question. +1 point! :)
+                *score += 1;
+            }
+        }
+    }
+
+    println!("[{}]: QUESTIONS FINISHED; {} players", T_GAME, scores.len());
+    println!("[{}]: FINAL RESULTS:", T_GAME);
+    scores.iter().enumerate().for_each(
+        |(i, (a, s))| println!("{}) {:?} scored {}", i, a, s)
+    );
+    for stream in &mut *streams.lock().unwrap() {
+        send_bytes_to_stream(stream, b"\x81\x24Game Finished! Closing Connection...");
+    }
+
+    #[allow(deprecated)]
+    thread::sleep_ms(2000);
+    for stream in &mut *streams.lock().unwrap() {
+        stream.shutdown(std::net::Shutdown::Both).expect("Shutdown failed");
+    }
+}
+
 fn ws_handshake_respond(
     mut stream: TcpStream,
     request_text: String,
@@ -192,8 +201,8 @@ fn ws_handshake_respond(
 }
 
 fn send_bytes_to_stream(stream: &mut TcpStream, buf: &[u8]) {
-    stream.write(buf).unwrap();
-    stream.flush().unwrap();
+    stream.write(buf).expect("Write failed!");
+    stream.flush().expect("Flush failed!");
 }
 
 fn ws_parse_incoming(buf: &[u8; 8]) -> Option<(u8, u8)> {

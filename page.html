@@ -7,54 +7,55 @@
 <style type="text/css">body{text-align:center;margin:40px auto;max-width:650px;line-height:1.6;font-size:18px;color:#eee;background-color:#121212;padding:0 10px;font-family: "Comic Sans MS", "Comic Sans", cursive;}</style>
 
 <script type="text/javascript">
+main = function() {
+  var name = prompt("Picnic!", "greg");
+  const socket = new WebSocket('ws://localhost:7878/ws/' + name);
+  socket.onopen = function() {console.log("socket opened :)");};
+  socket.onerror = function(e) {console.log('websocket error!');};
+  socket.onclose = function(e) {
+    console.log("websocket closed! code:" +e.code+ " reason:" + e.reason);
+    clear("Connection Closed!");
+  };
+  socket.onmessage = function(e) {
+    console.log("recieved:\n" + e.data);
+    const arr = e.data.split("\n");
+    const first = arr[0];
+    if (isNaN(parseInt(first))) {
+      // first line is a non-number => this is a message
+      clear(first);
+    } else {
+      // first line is a number => this is a question
+      q_id = first;
+      const opt_count = arr.length - 2;
 
-var name = prompt("Pick a Nick!", "Greg");
-const socket = new WebSocket('ws://localhost:7878/ws');// + nick);
-socket.onopen = function() {console.log("socket opened :)");};
-socket.onerror = function(e) {console.log('websocket error!');};
-socket.onclose = function(e) {
-  console.log("websocket closed! code:" +e.code+ " reason:" + e.reason);
-  clear("Connection Closed!");
-};
-socket.onmessage = function(e) {
-  console.log("recieved:\n" + e.data);
-  const arr = e.data.split("\n");
-  const first = arr[0];
-  if (isNaN(parseInt(first))) {
-    // first line is a non-number => this is a message
-    clear(first);
-  } else {
-    // first line is a number => this is a question
-    q_id = first;
-    const opt_count = arr.length - 2;
-    
-    clear(arr[1]);
+      clear(arr[1]);
 
-    const d = document.getElementById("buttons");
-    for (let a_id=0; a_id<opt_count; a_id++) {
-      var butt = document.createElement("button");
-      butt.innerHTML = arr[a_id+2];
-      butt.style.width = "200px";
-      butt.style.height = "200px";
-      butt.style.margin = "2px";
-      butt.onclick = function() {submitAns(q_id, a_id)};
+      const d = document.getElementById("buttons");
+      for (let a_id=0; a_id<opt_count; a_id++) {
+        var butt = document.createElement("button");
+        butt.innerHTML = arr[a_id+2];
+        butt.style.width = "200px";
+        butt.style.height = "200px";
+        butt.style.margin = "2px";
+        butt.onclick = function() {submitAns(q_id, a_id)};
 
-      d.appendChild(butt);
+        d.appendChild(butt);
+      }
     }
+  };
+
+  function clear(msg) {
+    document.getElementById("buttons").innerHTML = "";  // delete buttons
+    document.getElementById("title").innerHTML = msg;
   }
-};
 
-function clear(msg) {
-  document.getElementById("buttons").innerHTML = "";  // delete buttons
-  document.getElementById("title").innerHTML = msg;
+  function submitAns(qID, aID) {
+    clear("Waiting Patiently...");
+    socket.send(String(qID) + String(aID));
+    console.log("guessed " + aID + " for question " + qID);
+  }
 }
-
-function submitAns(qID, aID) {
-  clear("Waiting Patiently...");
-  socket.send(String(qID) + String(aID));
-  console.log("guessed " + aID + " for question " + qID);
-}
-
+window.onload = main;
 </script>
 
 
