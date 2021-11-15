@@ -8,7 +8,8 @@
 
 <script type="text/javascript">
 
-const socket = new WebSocket('ws://localhost:7878/ws');
+var name = prompt("Pick a Nick!", "Greg");
+const socket = new WebSocket('ws://localhost:7878/ws');// + nick);
 socket.onopen = function() {console.log("socket opened :)");};
 socket.onerror = function(e) {console.log('websocket error!');};
 socket.onclose = function(e) {
@@ -27,7 +28,7 @@ socket.onmessage = function(e) {
     q_id = first;
     const opt_count = arr.length - 2;
     
-    document.getElementById("title").innerHTML = arr[1];
+    clear(arr[1]);
 
     const d = document.getElementById("buttons");
     for (let a_id=0; a_id<opt_count; a_id++) {
@@ -60,7 +61,7 @@ function submitAns(qID, aID) {
 </head>
 <body>
 <h1>Grihoot :)</h1>
-<h2 id="title">Waiting Patiently...</h2>
+<h2 id="title">Waiting For Data...</h2>
 <div id="buttons" style="display: grid;grid-template-columns: 200px 200px 200px;grid-column-gap: 10px;grid-row-gap: 10px;"></div>
 </body>
 </html>
