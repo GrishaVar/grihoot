@@ -1,7 +1,6 @@
 extern crate sha1;
 
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::ops::Deref;
 use std::{env, panic};
 use std::path::Path;
@@ -55,7 +54,7 @@ fn main() {
         questions.push(Question{id, ans, text, ws_pack});
     }
 
-    // prepare HTML page
+    // prepare HTML page from file
     let html_page = fs::read_to_string("page.html")
         .expect("Failed to read HTML; have page.html in same directory!");
     let http_reponse = format!(
@@ -64,14 +63,15 @@ fn main() {
         html_page,
     );
 
-    // prepare stream handles handler
+    // prepare shared data
     let streams = Arc::new(Mutex::new(Vec::with_capacity(20)));
-    // TODO: remove type here
+    let usernames = Arc::new(Mutex::new(HashMap::with_capacity(20)));
 
-    // set up game data and thread
+    // start game thread
     let game_thread = {
         let streams = Arc::clone(&streams);
-        thread::spawn( || {game(streams, questions);})
+        let usernames = Arc::clone(&usernames);
+        thread::spawn(|| {game(streams, questions, usernames);})
     };
 
     // start server
@@ -92,14 +92,22 @@ fn main() {
             // assuming never more than 100 or so users
             println!("[{}]: Root GET request; serving webpage", T_MAIN);
             send_bytes_to_stream(&mut stream, http_reponse.as_bytes());
-        } else if beg_text.starts_with("GET /ws") {
+        } else if beg_text.starts_with("GET /ws/") {
             println!("[{}]: WS GET request; replying with handshake", T_MAIN);
             let streams = Arc::clone(&streams);
+            let username = beg_text
+                .split("/ws/").nth(1).unwrap()
+                .split(" ").nth(0).unwrap().to_string();  // TODO delete this
             ws_handshake_respond(
                 stream.try_clone().unwrap(),
                 beg_text,
             );
             stream.set_nonblocking(true).expect("Failed to set nb");
+            let usernames = Arc::clone(&usernames);
+            usernames.lock().unwrap().insert(
+                stream.peer_addr().unwrap(),
+                username,
+            );
             streams.lock().unwrap().push(stream);
         } else {
             println!("[{}]: Failed to parse GET req", T_MAIN);
@@ -113,6 +121,7 @@ fn main() {
 fn game(
     streams: Arc<Mutex<Vec<TcpStream>>>,
     questions: Vec<Question>,
+    usernames: Arc<Mutex<HashMap<SocketAddr, String>>>,
 ) {
     let mut scores: HashMap<SocketAddr, u8> = HashMap::with_capacity(20);
 
@@ -157,10 +166,15 @@ fn game(
 
     println!("[{}]: QUESTIONS FINISHED; {} players", T_GAME, scores.len());
     println!("[{}]: FINAL RESULTS:", T_GAME);
-    println!("{:?}", scores);
-    /* scores.iter().enumerate().for_each(
-        |(i, (a, s))| println!("{}) {:?} scored {}", i, a, s)
-    ); */
+
+    let mut final_scores: Vec<(&SocketAddr, &u8)> = scores.iter().collect();
+    final_scores.sort_by_key(|a| a.1);
+    final_scores.iter().for_each(|(a, s)| println!(
+        "{} scored {}",
+        usernames.lock().unwrap().get(a).unwrap(),
+        s,
+    ));
+
     for stream in &mut *streams.lock().unwrap() {
         send_bytes_to_stream(stream, b"\x81\x24Game Finished! Closing Connection...");
     }
