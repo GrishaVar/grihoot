@@ -20,9 +20,9 @@ main = function() {
     console.log("recieved:\n" + e.data);
     const arr = e.data.split("\n");
     const first = arr[0];
-    if (isNaN(parseInt(first))) {
+    if (first === "\0") {
       // first line is a non-number => this is a message
-      clear(first);
+      clear(arr[1]);
     } else {
       // first line is a number => this is a question
       q_id = first;

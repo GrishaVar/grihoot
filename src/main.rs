@@ -1,6 +1,7 @@
 extern crate sha1;
 
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::ops::Deref;
 use std::{env, panic};
 use std::path::Path;
@@ -20,7 +21,7 @@ const T_GAME: &str = "GAME";
 
 #[derive(Debug)]
 struct Question {
-    id: u8,  // index of question (utf8 encoded)
+    id: u8,
     ans: u8, // index of answer (utf8 encoded)
     text: String, // question and answers separated by newlines
     ws_pack: Vec<u8>, // bytes for sending question via ws 
@@ -43,7 +44,7 @@ fn main() {
     // extract questions from file
     let mut questions: Vec<Question> = Vec::with_capacity(10);
     for (id, mut text) in file_contents.split("\n\n").map(|s| s.to_string()).enumerate() {
-        let id: u8 = id as u8 + b'0';
+        let id: u8 = (id+1).try_into().expect("Too many questions!");// + b'0';
         let ans: u8 = text.bytes().nth(0).expect("empty question; newlines at end of file?");
         text.remove(0);  // TODO: O(n). Store at the end so I can pop?
         let mut ws_pack = String::with_capacity(2 + text.len());
@@ -176,7 +177,10 @@ fn game(
     ));
 
     for stream in &mut *streams.lock().unwrap() {
-        send_bytes_to_stream(stream, b"\x81\x24Game Finished! Closing Connection...");
+        send_bytes_to_stream(
+            stream,
+            &ws_packet(b"\0\nGame finished; closing conneciton"),
+        );
     }
 
     #[allow(deprecated)]
@@ -232,12 +236,12 @@ fn ws_packet(payload: &[u8]) -> Vec<u8> {
     res.push(0b1_000_0001);  // defaut header (fin; op1)
 
     // Payload length
-    if len < 2<<6 {
+    if len < 126 {
         res.push(len as u8);
-    } else if len < 2<<15 {
+    } else if len < 1<<16 {
         res.push(126);  // mask flag = 0
         res.extend_from_slice(&(len as u16).to_be_bytes());
-    } else if len < 2<<63 {
+    } else if (len as u64) < u64::MAX {
         println!("MASSIVE PACKET!");  // should never happen
         res.push(127);  // mask flag = 0
         res.extend_from_slice(&(len as u64).to_be_bytes());
