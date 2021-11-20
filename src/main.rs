@@ -19,6 +19,8 @@ const ANSWER_TIME_MS: u32 = 5 * 1000;
 const T_MAIN: &str = "MAIN";
 const T_GAME: &str = "GAME";
 
+const PRINT_SEND: bool = false;  // do with cfg?
+
 #[derive(Debug)]
 struct Question {
     id: u8,
@@ -168,18 +170,34 @@ fn game(
     println!("[{}]: QUESTIONS FINISHED; {} players", T_GAME, scores.len());
     println!("[{}]: FINAL RESULTS:", T_GAME);
 
-    let mut final_scores: Vec<(&SocketAddr, &u8)> = scores.iter().collect();
-    final_scores.sort_by_key(|a| a.1);
-    final_scores.iter().for_each(|(a, s)| println!(
-        "{} scored {}",
-        usernames.lock().unwrap().get(a).unwrap(),
-        s,
-    ));
+    let users = &*usernames.lock().unwrap();
+    let mut final_scores: Vec<(String, u8)> = scores.into_iter()
+        .map(|(a, s)| (users[&a].clone(), s))
+        .collect();
+    drop(users);  // unblocks main thread
+    final_scores.sort_by_key(|a| u8::MAX-a.1);
+    let final_scores = final_scores.into_iter()
+        .map(|(u, s)| format!("{}: {}", u, s))
+        .collect::<Vec<String>>().join("\n");
+        // .fold(  // join but cooler. Way slower, how sad :(((
+        //     String::with_capacity(10*player_count),
+        //     |mut a, b| {a.push('\n'); a.push_str(&b); a},
+        // );
 
+    println!("{}", final_scores);
     for stream in &mut *streams.lock().unwrap() {
         send_bytes_to_stream(
             stream,
-            &ws_packet(b"\0\nGame finished; closing conneciton"),
+            &ws_packet(&[b"\0RESULTS:\n", final_scores.as_bytes()].concat()),
+        );
+    }
+
+    #[allow(deprecated)]
+    thread::sleep_ms(20 * 1000);
+    for stream in &mut *streams.lock().unwrap() {
+        send_bytes_to_stream(
+            stream,
+            &ws_packet(b"\0Game finished; closing conneciton"),
         );
     }
 
@@ -214,6 +232,7 @@ fn ws_handshake_respond(
 }
 
 fn send_bytes_to_stream(stream: &mut TcpStream, buf: &[u8]) {
+    if PRINT_SEND {println!("SENDING: {:?}", buf)}
     stream.write(buf).expect("Write failed!");
     stream.flush().expect("Flush failed!");
 }
@@ -232,7 +251,7 @@ fn ws_packet(payload: &[u8]) -> Vec<u8> {
     // https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers
     let len: usize = payload.len();
     let mut res: Vec<u8> = Vec::with_capacity(len + 12);
-    
+
     res.push(0b1_000_0001);  // defaut header (fin; op1)
 
     // Payload length
